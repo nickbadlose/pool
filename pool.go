@@ -55,11 +55,16 @@ type WorkerPool struct {
 // can be closed, by calling the Done method.
 //
 // The user can start receiving any completed jobs as early as they like, via the basic Receive method.
-func (wp *WorkerPool) Start(ctx context.Context, jobs int) *Dispatcher {
+func (wp *WorkerPool) Start(ctx context.Context, jobs ...int) *Dispatcher {
+	totalJobs := 0
+	for _, j := range jobs {
+		totalJobs += j
+	}
+
 	dr := &Dispatcher{
 		ctx:     ctx,
-		rcv:     make(chan any, jobs),
-		wc:      make(chan Worker, jobs),
+		rcv:     make(chan any, totalJobs),
+		wc:      make(chan Worker, totalJobs),
 		timeout: wp.workTimeout,
 		closed:  false,
 		wg:      sync.WaitGroup{},
@@ -178,6 +183,16 @@ func (dr *Dispatcher) listen(ctx context.Context) {
 
 // close the dispatchers' worker channel if it hasn't already been closed.
 func (dr *Dispatcher) close() {
+	go func() {
+		// if the channel is buffered, we don't need to drain it.
+		if len(dr.wc) == 0 {
+			for range dr.wc {
+				// drain any work so we can get the lock.
+				// this stops us hanging on close if the dispatcher is attempting to send something.
+			}
+		}
+	}()
+
 	// lock our dispatcher before closing
 	dr.mu.Lock()
 	defer dr.mu.Unlock()
