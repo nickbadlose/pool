@@ -5,8 +5,8 @@ import "time"
 const (
 	maxWorkers     = 50
 	minWorkers     = 1
-	maxWorkTimeout = int(10 * time.Minute)
-	maxPoolTimeout = int(30 * time.Minute)
+	maxWorkTimeout = int(1 * time.Hour)
+	maxPoolTimeout = int(24 * time.Hour)
 )
 
 // Option interface allows us to safely apply configuration to a workerPool
@@ -39,6 +39,7 @@ func newOptionFunc(fn func(*config)) Option {
 }
 
 // WithWorkers allows us to override the number of workers the jobs should be buffered to.
+// Restricted to minWorkers < n < maxWorkers.
 func WithWorkers(n int) Option {
 	return newOptionFunc(func(cfg *config) {
 		cfg.workers = constrictToRange(n, minWorkers, maxWorkers)
@@ -46,6 +47,7 @@ func WithWorkers(n int) Option {
 }
 
 // WithWorkTimeout allows us to override the timeout on each singular job being completed.
+// Restricted to minWorkTimeout < duration < maxWorkTimeout.
 func WithWorkTimeout(duration time.Duration) Option {
 	return newOptionFunc(func(cfg *config) {
 		cfg.workTimeout = time.Duration(constrictToRange(int(duration), 0, maxWorkTimeout))
@@ -53,6 +55,7 @@ func WithWorkTimeout(duration time.Duration) Option {
 }
 
 // WithPoolTimeout allows us to override the timeout of the worker pool, this is for all jobs to be completed.
+// Restricted to minPoolTimeout < duration < maxPoolTimeout.
 func WithPoolTimeout(duration time.Duration) Option {
 	return newOptionFunc(func(cfg *config) {
 		tOut := time.Duration(constrictToRange(int(duration), 0, maxPoolTimeout))

@@ -14,6 +14,7 @@ import (
 // TODO benchmarks also for normal concurrency pipeline vs one configured by this? Do one that is set up by configuring all go routines first and using semaphore to limit number of active ones?
 // TODO README, semantic release, linting, CICD
 // TODO fuzz testing for nil pointers etc.
+// Test an empty initialisation of the struct
 
 const jobs = 100
 
@@ -50,6 +51,7 @@ func TestWorkerPool(t *testing.T) {
 	for r := range d.Receive() {
 		res = append(res, r.(int))
 	}
+	require.NoError(t, d.Err())
 	require.Equal(t, jobs, len(res))
 }
 
@@ -79,11 +81,17 @@ func TestContextCancelled(t *testing.T) {
 
 	// attempt to dispatch after context is cancelled.
 	err := d.Dispatch(&testWorker{10})
-	// when ctx was cancelled we should receive an error once the dispatch channel is closed due to this.
+	// when ctx was cancelled we should receive an error when attempting to dispatch as it should be closed.
 	require.Error(t, err)
+	require.ErrorIs(t, err, ErrDispatcherClosed)
 
 	// we should not panic if context is cancelled, we should shut down gracefully.
 	d.Done()
+
+	// check the error returned from the dispatcher.
+	err = d.Err()
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
 
 	// any jobs after context is cancelled should not be received, so len should be < than the number of jobs.
 	require.Less(t, len(res), jobs)
@@ -109,6 +117,7 @@ func TestWorkerChanClosed(t *testing.T) {
 		res = append(res, r.(int))
 	}
 
+	require.NoError(t, d.Err())
 	// no jobs should have been dispatched since the worker channel was immediately closed.
 	require.Equal(t, len(res), 0)
 }
@@ -161,6 +170,9 @@ func TestPipeline(t *testing.T) {
 	for r := range d3.Receive() {
 		res = append(res, r.(int))
 	}
+
+	err := wp.Err(d, d2, d3)
+	require.NoError(t, err)
 
 	// require all jobs were completed
 	require.Equal(t, jobs, len(res))

@@ -22,10 +22,15 @@ import (
 //  Should dispatch take in ctx and use select statement for when dispatching items? Not necessary since we check if channel is closed and return error.
 //  Have a Start method and StartWithJobs ? To separate the two options?
 //  Close method may need to drain before closing in the case of unbuffered channel. Make sure all items are dispatched and read correctly in success cases.
+//  nil check in methods for fields, not struct
 
 const (
 	defaultWorkers     = 5
 	defaultWorkTimeout = 2 * time.Minute
+)
+
+var (
+	ErrDispatcherClosed = errors.New("dispatcher closed")
 )
 
 // Worker interface allows a user to perform jobs.
@@ -48,13 +53,15 @@ type WorkerPool struct {
 	*config
 }
 
-// Start sets up a worker pool and returns a Dispatcher.
+// Start sets up a worker pool and returns a Dispatcher for interaction.
 //
 // The Dispatcher allows the user to dispatch any jobs they require doing down the worker channel,
-// via the Dispatch method. Once all jobs have been dispatched, it is up to the user to signal that the channel
-// can be closed, by calling the Done method.
+// via the Dispatcher.Dispatch() method. Once all jobs have been dispatched, it is up to the user to signal that
+// the channel can be closed, by calling the Done method.
 //
-// The user can start receiving any completed jobs as early as they like, via the basic Receive method.
+// The user can start receiving any completed jobs as early as they like, via the basic Dispatcher.Receive() method.
+// Once the user has finished receiving jobs, a call to Dispatcher.Err() should be made, to check if any error was
+// encountered.
 func (wp *WorkerPool) Start(ctx context.Context, jobs ...int) *Dispatcher {
 	totalJobs := 0
 	for _, j := range jobs {
@@ -74,6 +81,19 @@ func (wp *WorkerPool) Start(ctx context.Context, jobs ...int) *Dispatcher {
 	wp.do(dr)
 
 	return dr
+}
+
+// Err returns the last error received by any of the given dispatchers.
+//
+// Helpful when using a pipeline of dispatchers, and you only want to check for errors at the end, rather than at each
+// stage.
+func (wp *WorkerPool) Err(ds ...*Dispatcher) error {
+	for _, d := range ds {
+		if err := d.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // do, sets up a worker pool of wp.workers workers using the worker pools config. Each worker listens for jobs to
@@ -99,8 +119,8 @@ func (wp *WorkerPool) do(dr *Dispatcher) {
 		// defer functions are first in last out, so the ctx cancel will only be called after the receiver
 		// chan has closed.
 		defer func() {
-			// close the receiver when all jobs have been processed.
-			dr.wait()
+			// close the receiver when all workers have exited.
+			dr.wgWait()
 			close(dr.rcv)
 		}()
 
@@ -117,6 +137,8 @@ type Dispatcher struct {
 	rcv chan any
 	// worker channel to dispatch jobs down.
 	wc chan Worker
+	// error stores the latest error received from the dispatcher.
+	err error
 	// the timeout to process a job before cancelling it.
 	timeout time.Duration
 	// whether the worker chan is closed or not.
@@ -129,51 +151,64 @@ type Dispatcher struct {
 }
 
 // Dispatch takes a worker and sends it down the channel. it will return an error if the channel is closed.
-func (dr *Dispatcher) Dispatch(w Worker) error {
-	dr.mu.RLock()
-	defer dr.mu.RUnlock()
-	if dr.closed {
-		return errors.New("dispatcher closed")
+func (d *Dispatcher) Dispatch(w Worker) error {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.closed {
+		return ErrDispatcherClosed
 	}
 
-	dr.wc <- w
+	d.wc <- w
 
 	return nil
 }
 
-// Receive implements the receiver interface, it returns a channel to listen for processed jobs on.
-func (dr *Dispatcher) Receive() <-chan any {
-	return dr.rcv
+// Receive returns a channel to listen for processed jobs on.
+//
+// The user can safely listen on this channel until it is closed, either by the user calling Done() or internally
+// due to an error.
+//
+// The user should make a call to Err() once they have finished receiving to check if any errors were encountered
+// during the dispatching or processing of the jobs.
+func (d *Dispatcher) Receive() <-chan any {
+	return d.rcv
 }
 
 // Done signals all jobs have been dispatched and closes the dispatchers' worker channel.
-func (dr *Dispatcher) Done() { dr.close() }
+func (d *Dispatcher) Done() { d.close() }
+
+// Err returns the last error received from the dispatcher.
+func (d *Dispatcher) Err() error {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.err
+}
 
 // listen for jobs to process from the worker chan.
-func (dr *Dispatcher) listen(ctx context.Context) {
+func (d *Dispatcher) listen(ctx context.Context) {
 	// register worker.
-	dr.add()
+	d.wgAdd()
 	go func() {
 		// signal work is finished.
-		defer dr.done()
+		defer d.wgDone()
 
 		for {
 			select {
 			case <-ctx.Done():
 				// close the dispatcher early to stop receiving new jobs, as context has been cancelled.
-				dr.close()
+				d.closeWithErr(ctx.Err())
 				return
-			case w, open := <-dr.wc:
+			case w, open := <-d.wc:
 				if !open {
 					// no more jobs, shut down.
 					return
 				}
 
 				// always add a timeout to any work methods.
-				wCtx, wCancel := context.WithTimeout(ctx, dr.timeout)
+				wCtx, wCancel := context.WithTimeout(ctx, d.timeout)
 
 				// process the required job and send the result down the receiver.
-				dr.rcv <- w.Work(wCtx)
+				d.rcv <- w.Work(wCtx)
 
 				wCancel()
 			}
@@ -181,28 +216,43 @@ func (dr *Dispatcher) listen(ctx context.Context) {
 	}()
 }
 
+// close and set an error on the dispatcher to be returned with Err().
+func (d *Dispatcher) closeWithErr(err error) {
+	d.close(func() {
+		d.err = err
+	})
+}
+
 // close the dispatchers' worker channel if it hasn't already been closed.
-func (dr *Dispatcher) close() {
+//
+// It takes a variadic slice of actions to apply before closing.
+func (d *Dispatcher) close(actions ...func()) {
 	go func() {
 		// if the channel is buffered, we don't need to drain it.
-		if len(dr.wc) == 0 {
-			for range dr.wc {
+		if len(d.wc) == 0 {
+			for range d.wc {
 				// drain any work so we can get the lock.
-				// this stops us hanging on close if the dispatcher is attempting to send something.
+				// this stops us hanging if the dispatcher is attempting to send something and has an RLock.
 			}
 		}
 	}()
 
-	// lock our dispatcher before closing
-	dr.mu.Lock()
-	defer dr.mu.Unlock()
-	if dr.closed {
+	// lock our dispatcher before closing.
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// apply any supplied actions under lock.
+	for _, act := range actions {
+		act()
+	}
+
+	if d.closed {
 		return
 	}
-	dr.closed = true
-	close(dr.wc)
+	d.closed = true
+	close(d.wc)
 }
 
-func (dr *Dispatcher) add()  { dr.wg.Add(1) }
-func (dr *Dispatcher) wait() { dr.wg.Wait() }
-func (dr *Dispatcher) done() { dr.wg.Done() }
+func (d *Dispatcher) wgAdd()  { d.wg.Add(1) }
+func (d *Dispatcher) wgWait() { d.wg.Wait() }
+func (d *Dispatcher) wgDone() { d.wg.Done() }
