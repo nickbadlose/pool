@@ -187,6 +187,8 @@ func testDispatcherPipeline(
 	return res, wp.Err(d, d2, d3)
 }
 
+// TODO clean up steps in here, we don't need so many, some receivers / dispatchers can be omitted for the same result
+
 // for benchmarking a standard worker pool setup.
 func testGenericPipeline(jobs, workers int, initialWorker Worker, handler func(any) (Worker, error)) error {
 	ctx := context.Background()

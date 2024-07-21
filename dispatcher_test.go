@@ -2,8 +2,10 @@ package pool
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
+	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TODO clean up tests, testing options should be done separately etc.
@@ -121,5 +123,39 @@ func TestDispatcherPipeline(t *testing.T) {
 		tw, ok := w.(*testWorker)
 		require.True(t, ok)
 		require.Equal(t, 4, tw.i)
+	}
+}
+
+func TestBufferedWait(t *testing.T) {
+	mu := sync.Mutex{}
+	wg := sync.WaitGroup{}
+	res := make([]int, 0, jobs)
+
+	wp := NewWorkerPool()
+	d := wp.Start(btx, jobs)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for r := range d.Receive() {
+			mu.Lock()
+			res = append(res, r.(int)+1)
+			mu.Unlock()
+		}
+	}()
+
+	for i := 0; i < jobs; i++ {
+		err := d.Dispatch(&testWorker{1})
+		require.NoError(t, err)
+	}
+	d.Done()
+	wg.Wait()
+
+	require.NoError(t, d.Err())
+
+	// require all jobs were completed
+	require.Equal(t, jobs, len(res))
+	// require each job went through each stage of pipeline
+	for _, i := range res {
+		require.Equal(t, 2, i)
 	}
 }

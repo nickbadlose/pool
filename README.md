@@ -91,31 +91,31 @@ func pipeline(ctx context.Context, jobs int) (int, error) {
     
     total := 0
     for r := range d3.Receive() {
-        ew, ok := r.(*workerRes)
+        wr, ok := r.(*workerRes)
         if !ok {
             d3.SetErr(errors.New("not a workerRes"))
             break
         }
-        if ew.err != nil {
-            d3.SetErr(ew.err)
+        if wr.err != nil {
+            d3.SetErr(wr.err)
             break
         }
         
-        total += ew.i
+        total += wr.i
     }
     
     return total, wp.Err(d, d2, d3)
 }
 
 func workerHandler(w any) (*worker, error) {
-    ew, ok := w.(*workerRes)
+    wr, ok := w.(*workerRes)
     if !ok {
         return nil, errors.New("not a workerRes")
     }
-    if ew.err != nil {
-        return nil, ew.err
+    if wr.err != nil {
+        return nil, wr.err
     }
-    return &worker{i: ew.i + 1}, nil
+    return &worker{i: wr.i + 1}, nil
 }
 ```
 
@@ -131,30 +131,16 @@ import (
 	"github.com/nickbadlose/pool"
 )
 
-type worker struct {
-	i int
-}
-
-type workerRes struct {
-	i   int
-	err error
-}
-
-func (w *worker) Work(context.Context) any {
-	// perform some work, return error cases.
-	return &workerRes{i: w.i, err: nil}
-}
-
 func main() {
-	ctx, cancel := context.WithCancel()
-	defer cancel()
-
-	jobs := make([]worker, 10)
-
-	wp := pool.NewWorkerPool()
-	d := wp.Start(ctx, len(jobs))
-	go func() {
-		defer d.Done()
+    ctx, cancel := context.WithCancel()
+    defer cancel()
+    
+    jobs := make([]worker, 10)
+    
+    wp := pool.NewWorkerPool()
+    d := wp.Start(ctx, len(jobs))
+    go func() {
+        defer d.Done()
         for _, j := range jobs {
             err := d.Dispatch(j)
             if err != nil {
@@ -162,27 +148,92 @@ func main() {
             }
         }
     }()
-
-	for r := range d.Receive() {
-		log.Println(r)
-		// handle response
-	}
-
-	if d.Err() != nil {
-		// handle error
-	}
-
-	// continue	
+    
+    for r := range d.Receive() {
+        log.Println(r)
+        // handle response
+    }
+    
+    if d.Err() != nil {
+        // handle error
+    }
+    
+    // continue	
 }
 ```
 
 ### Buffered vs Unbuffered
 
+TODO check the performance cost after benchmarking different pattern.
+
 A user can specify the number of jobs they will be dispatching beforehand, in which case the dispatcher will use a 
-buffered channel. However, this comes at a [performance cost](#benchmarks).
+buffered channel. This can be useful for certain concurrency patterns, however, this comes at a [performance cost](#benchmarks).
 
 - Buffered: `wp.Start(ctx, jobs)`
 - Unbuffered: `wp.Start(ctx)`
+
+Buffered example:
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"sync"
+
+	"github.com/nickbadlose/pool"
+)
+
+func main() {
+    ctx, cancel := context.WithCancel()
+    defer cancel()
+    
+    jobs := make([]*worker, 10)
+    mu := sync.Mutex{}
+    wg := sync.WaitGroup{}
+    total := 0
+    
+    wp := pool.NewWorkerPool()
+    d := wp.Start(ctx, len(jobs))
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        for r := range d.Receive() {
+            wr, ok := r.(*workerRes)
+            if !ok {
+                d.SetErr(errors.New("not a workerRes"))
+                return
+            }
+            if wr.err != nil {
+                d.SetErr(wr.err)
+                return
+            }
+    
+            mu.Lock()
+            total += wr.i
+            mu.Unlock()
+        }
+    }()
+    
+    for _, j := range jobs {
+        err := d.Dispatch(j)
+        if err != nil {
+            break
+        }
+    }
+    d.Done()
+    wg.Wait()
+    
+    if d.Err() != nil {
+        // handle error
+    }
+    
+    log.Println(total)
+    
+    // continue	
+}
+```
 
 ## Testing
 
@@ -254,9 +305,76 @@ unbuffered dispatcher perform at a similar level.
 
 ### Fuzz
 
+TODO docs on fuzz tests
+
 `FuzzDispatcherPipeline`
 
-## Improvements
+## Improvements / TODOs
 
-- If the buffered dispatcher just slows down performance, would it be worth binning off the option altogether?
+- Fuzz test pipelines using the wait method.
 - Should we allow users to specify the number of workers at the dispatcher level, maybe take in ...Options?
+- Add a WithLock method which takes func for setting things with a lock, could have a read method too which wraps 
+  in a rLock. This should use a different RWMutex to the one used internally. e.g:
+    ```go
+    package main
+    
+    import (
+    "context"
+    "log"
+    "sync"
+    
+        "github.com/nickbadlose/pool"
+    )
+    
+    func main() {
+    ctx, cancel := context.WithCancel()
+    defer cancel()
+    
+        jobs := make([]*worker, 10)
+        wg := sync.WaitGroup{}
+        total := 0
+        
+        wp := pool.NewWorkerPool()
+        d := wp.Start(ctx, len(jobs))
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            for r := range d.Receive() {
+                wr, ok := r.(*workerRes)
+                if !ok {
+                    d.SetErr(errors.New("not a workerRes"))
+                    return
+                }
+                if wr.err != nil {
+                    d.SetErr(wr.err)
+                    return
+                }
+        
+                d.WithLock(func() {
+                    total += wr.i
+                })
+            }
+        }()
+        
+        for _, j := range jobs {
+            err := d.Dispatch(j)
+            if err != nil {
+                break
+            }
+        }
+        d.Done()
+        wg.Wait()
+        
+        if d.Err() != nil {
+            // handle error
+        }
+        
+        log.Println(total)
+        
+        // continue	
+    }
+    ```
+- Have Done, Add and Wait methods attached which increment and wait for an internal WG, should use a different one from 
+  the internal one. 
+- Could we have two different dispatchers, buffered and unbuffered, so we don't have all this overhead on every one 
+  returned? We may not need mutexes and wait groups on buffered?
