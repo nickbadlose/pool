@@ -6,10 +6,9 @@ abstract away some of the nuances of handling concurrency safely, making it easy
 deadlocks. See [usage](#usage).
 
 We have [benchmarked](#benchmarks) the package against just using the standard go lib, the performance difference is 
-favourable against some pipeline patterns and minimal against others. However, there are, of course many pipeline 
-patterns to benchmark, so feel free to test it out against them, this is just a common example. You should only be 
-using the Dispatcher pipeline if you feel it can help you handle the complexities of concurrency, rather than 
-writing your own.
+minimal. However, there are, of course many pipeline patterns to benchmark, so feel free to test it out against them, 
+this is just a common example. You should only be using the Dispatcher pipeline if you feel it can help you handle 
+the complexities of concurrency, rather than writing your own.
 
 ## Usage
 
@@ -274,41 +273,42 @@ Here are the results, in the `-bench` flag of the test command, J represents the
 number of workers processing them:
 
 ```
-go test -bench=J1000W10HW -benchtime=10s -benchmem
+go test -bench=J1000W10 -benchtime=10s -benchmem
 goos: darwin
 goarch: arm64
 pkg: github.com/nickbadlose/pool
-BenchmarkGenericJ1000W10HW-16                122          98186250 ns/op        200586394 B/op   1558052 allocs/op
-BenchmarkUnbufferedJ1000W10HW-16             124          95572461 ns/op        201097824 B/op   1570006 allocs/op
-BenchmarkBufferedJ1000W10HW-16               100         105500246 ns/op        196339596 B/op   1568570 allocs/op
+BenchmarkGeneric6StepsJ1000W10-16            254          47115684 ns/op        197806557 B/op   1557339 allocs/op
+BenchmarkGeneric3StepsJ1000W10-16            258          46560093 ns/op        197333406 B/op   1557192 allocs/op
+BenchmarkUnbufferedJ1000W10-16               248          47843100 ns/op        198677357 B/op   1569397 allocs/op
+BenchmarkBufferedJ1000W10-16                 254          66653843 ns/op        194317184 B/op   1567975 allocs/op
 PASS
-ok      github.com/nickbadlose/pool     55.474s
+ok      github.com/nickbadlose/pool     73.379s
 ```
 
 ```
-go test -bench=J100W10HW -benchtime=10s -benchmem 
+go test -bench=J100W10 -benchtime=10s -benchmem 
 goos: darwin
 goarch: arm64
 pkg: github.com/nickbadlose/pool
-BenchmarkGenericJ100W10HW-16                 934          12638872 ns/op        22378933 B/op     156605 allocs/op
-BenchmarkUnbufferedJ100W10HW-16              949          12531544 ns/op        22436337 B/op     157809 allocs/op
-BenchmarkBufferedJ100W10HW-16                592          20621393 ns/op        19654961 B/op     157014 allocs/op
+BenchmarkGeneric6StepsJ100W10-16            1572           7675767 ns/op        21415472 B/op     156338 allocs/op
+BenchmarkGeneric3StepsJ100W10-16            1569           7689075 ns/op        21456664 B/op     156343 allocs/op
+BenchmarkUnbufferedJ100W10-16               1455           8177907 ns/op        21786647 B/op     157639 allocs/op
+BenchmarkBufferedJ100W10-16                 1056          14547064 ns/op        19482136 B/op     156957 allocs/op
 PASS
-ok      github.com/nickbadlose/pool     41.998s
-
+ok      github.com/nickbadlose/pool     56.395s
 ```
 
 ```
-go test -bench=J10W5HW -benchtime=10s -benchmem
+go test -bench=J10W5 -benchtime=10s -benchmem 
 goos: darwin
 goarch: arm64
 pkg: github.com/nickbadlose/pool
-BenchmarkGenericJ10W5HW-16                  6326           1698978 ns/op         2358515 B/op      15731 allocs/op
-BenchmarkUnbufferedJ10W5HW-16               7316           1721392 ns/op         2399230 B/op      15869 allocs/op
-BenchmarkBufferedJ10W5HW-16                 3729           3073782 ns/op         1973799 B/op      15796 allocs/op
+BenchmarkGeneric6StepsJ10W5-16              8292           1390729 ns/op         2494266 B/op      15772 allocs/op
+BenchmarkGeneric3StepsJ10W5-16              9121           1370628 ns/op         2467171 B/op      15760 allocs/op
+BenchmarkUnbufferedJ10W5-16                 8239           1476730 ns/op         2546269 B/op      15914 allocs/op
+BenchmarkBufferedJ10W5-16                   4081           2481791 ns/op         1968424 B/op      15790 allocs/op
 PASS
-ok      github.com/nickbadlose/pool     36.926s
-
+ok      github.com/nickbadlose/pool     48.525s
 ```
 
 As you can see the buffered dispatcher is slightly slower than the unbuffered dispatcher, whereas the generic and 
@@ -316,12 +316,14 @@ unbuffered dispatcher perform at a similar level.
 
 ### Fuzz
 
-TODO docs on fuzz tests
-
-`FuzzDispatcherPipeline`
+The `testDispatcherPipeline` flow has been fuzz tested with different worker pool configurations to find any bugs and 
+fixed where necessary. See `FuzzDispatcherPipeline` for more information.
 
 ## Improvements / TODOs
 
+- Semantic release
+- Linting
+- CICD
 - Benchmarks have revealed bottlenecks when we use the `Receive` method as it isn't in a pool. Look into improving 
   this. Or should we just document to keep `Receive` loops light, and state to use a worker pool to receive if heavy.
 - Fuzz test different pipeline methods, including buffered pipelines using wait groups and mutexes etc.

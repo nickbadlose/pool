@@ -8,18 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TODO clean up tests, testing options should be done separately etc.
-
-// TODO benchmarks with more workers and no concurrency etc. Add in 100 * time.MilliSecond to simulate http requests etc. Do a mock server that hangs for 100 ms before responding with a heavy response?
-// TODO benchmarks also for normal concurrency pipeline vs one configured by this? Do one that is set up by configuring all go routines first and using semaphore to limit number of active ones?
-// TODO README, semantic release, linting, CICD
-// TODO fuzz testing for nil pointers etc.
-// Test an empty initialisation of the struct
-
-// TODO no need for go funcs for first stage of dispatching when you know the number of jobs
-//  Docs should always state to use go funcs at all times anyway and send number of jobs if known for performance reasons,
-//  Check with benchmarks against two types
-
 func TestDispatcherSingle(t *testing.T) {
 	wp := NewWorkerPool()
 

@@ -7,23 +7,6 @@ import (
 	"time"
 )
 
-// TODO
-//  Return structs not interfaces?
-//  Do we pass in the number of items of work that will need to be completed and pass that into start and use as the buffer for wc?
-//  Do we continue to finish any jobs after ctx cancelled? We want to gracefully finish all provided jobs?
-//  Can Start take in a []Worker and handle the dispatching? This limits us from being able to chain requests and dispatch another job in the Receive channel
-//  Protect against nil throughout
-//  rename to Dispatcher, since it is no longer an interface
-//  Try seeing if we block a channel by trying to send on it, if cancelling context will still kill it? Or if the reader needs to drain the channel before leaving
-//  The above only applies to unbuffered channels, not buffered like our in this.
-//  For when we use unbuffered examples, i.e. we don't know the number of items we need to process. We should dispatch items in a go routine, with maybe a DispatchAll method? Take in a []Worker?
-//  DispatchAll would have the total number of items to dispatch anyway, so include the func but not useful for unbuffered
-//  We could take in variadic number of jobs, in case there are multiple sources for the jobs, if empty use unbuffered channel?
-//  Should dispatch take in ctx and use select statement for when dispatching items? Not necessary since we check if channel is closed and return error.
-//  Have a Start method and StartWithJobs ? To separate the two options?
-//  Close method may need to drain before closing in the case of unbuffered channel. Make sure all items are dispatched and read correctly in success cases.
-//  nil check in methods for fields, not struct
-
 var (
 	// ErrDispatcherClosed signals the dispatcher is closed and any further jobs will not be dispatched and
 	// therefore processed.
