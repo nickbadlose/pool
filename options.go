@@ -33,7 +33,7 @@ func (s *optionFunc) apply(cfg *config) {
 	s.f(cfg)
 }
 
-// newOptionFunc generates a Option from a function.
+// newOptionFunc generates an Option from a function.
 func newOptionFunc(fn func(*config)) Option {
 	return &optionFunc{f: fn}
 }

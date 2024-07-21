@@ -10,7 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func FuzzPool(f *testing.F) {
+// TODO docs for skipping tests in short mode
+
+func FuzzDispatcherPipeline(f *testing.F) {
 	if testing.Short() {
 		f.Skip("skipping fuzz tests in short mode.")
 	}
@@ -19,7 +21,7 @@ func FuzzPool(f *testing.F) {
 	f.Add(654224, 245, 342, 1024, 10043, 100, 5, true)
 	f.Add(1, 1, 1, 1, 1, 1, 1, true)
 	f.Add(56, 4, 32, 100, 100, 1, 1000, true)
-	f.Fuzz(func(t *testing.T, stage1, stage2, stage3, workTimeout, poolTimeout, workers, jobs int, withJobs bool) {
+	f.Fuzz(func(t *testing.T, stage1, stage2, stage3, workTimeout, poolTimeout, workers, jobs int, buffered bool) {
 		var buf bytes.Buffer
 		buf.WriteString(fmt.Sprintf(
 			"\n%d,\n%d,\n%d,\n%d,\n%d,\n%d,\n%d,\n%t,\n",
@@ -30,7 +32,7 @@ func FuzzPool(f *testing.F) {
 			poolTimeout,
 			workers,
 			jobs,
-			withJobs,
+			buffered,
 		))
 
 		// log input so we can replicate any failures easily.
@@ -41,24 +43,15 @@ func FuzzPool(f *testing.F) {
 			t.Skip("jobs < 0")
 		}
 
-		// helper gets either a buffered or unbuffered dispatcher depending on withJobs.
-		getDispatcher := func(ctx context.Context, wp *WorkerPool, jobs int, withJobs bool) *Dispatcher {
-			d := wp.Start(ctx)
-			if withJobs {
-				d = wp.Start(ctx, jobs)
-			}
-			return d
-		}
-
 		ctx := context.Background()
 
-		wp := New(
+		wp := NewWorkerPool(
 			WithWorkers(workers),
 			WithWorkTimeout(time.Duration(workTimeout)*time.Second),
 			WithPoolTimeout(time.Duration(poolTimeout)*time.Second),
 		)
 
-		d := getDispatcher(ctx, wp, jobs, withJobs)
+		d := getDispatcher(ctx, wp, jobs, buffered)
 		go func() {
 			defer func() {
 				d.Done()
@@ -67,13 +60,13 @@ func FuzzPool(f *testing.F) {
 				err := d.Dispatch(&testWorker{stage1})
 				if err != nil {
 					t.Logf("%v", err)
-					require.ErrorIs(t, err, ErrDispatcherClosed)
+					require.ErrorIs(t, err, context.DeadlineExceeded)
 					return
 				}
 			}
 		}()
 
-		d2 := getDispatcher(ctx, wp, jobs, withJobs)
+		d2 := getDispatcher(ctx, wp, jobs, buffered)
 		go func() {
 			defer func() {
 				d2.Done()
@@ -83,13 +76,13 @@ func FuzzPool(f *testing.F) {
 				err := d2.Dispatch(&testWorker{i: i})
 				if err != nil {
 					t.Logf("%v", err)
-					require.ErrorIs(t, err, ErrDispatcherClosed)
+					require.ErrorIs(t, err, context.DeadlineExceeded)
 					return
 				}
 			}
 		}()
 
-		d3 := getDispatcher(ctx, wp, jobs, withJobs)
+		d3 := getDispatcher(ctx, wp, jobs, buffered)
 		go func() {
 			defer func() {
 				d3.Done()
@@ -99,7 +92,7 @@ func FuzzPool(f *testing.F) {
 				err := d3.Dispatch(&testWorker{i: i})
 				if err != nil {
 					t.Logf("%v", err)
-					require.ErrorIs(t, err, ErrDispatcherClosed)
+					require.ErrorIs(t, err, context.DeadlineExceeded)
 					return
 				}
 			}
@@ -134,4 +127,13 @@ func FuzzPool(f *testing.F) {
 // accepted values for timeout to be hit in tests, causing context to cancel.
 func timeoutIsLow(workTimeout, poolTimeout int) bool {
 	return workTimeout < int(100*time.Millisecond) || poolTimeout < int(1*time.Second)
+}
+
+// helper gets either a buffered or unbuffered dispatcher.
+func getDispatcher(ctx context.Context, wp *WorkerPool, jobs int, buffered bool) *Dispatcher {
+	d := wp.Start(ctx)
+	if buffered {
+		d = wp.Start(ctx, jobs)
+	}
+	return d
 }

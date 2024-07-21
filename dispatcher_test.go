@@ -2,10 +2,8 @@ package pool
 
 import (
 	"context"
-	"testing"
-	"time"
-
 	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 // TODO clean up tests, testing options should be done separately etc.
@@ -16,27 +14,12 @@ import (
 // TODO fuzz testing for nil pointers etc.
 // Test an empty initialisation of the struct
 
-const jobs = 100
+// TODO no need for go funcs for first stage of dispatching when you know the number of jobs
+//  Docs should always state to use go funcs at all times anyway and send number of jobs if known for performance reasons,
+//  Check with benchmarks against two types
 
-var btx = context.Background()
-
-type testWorker struct {
-	i int
-}
-
-func (t *testWorker) Work(context.Context) interface{} {
-	// simulate work being done, makes tests reliable
-	time.Sleep(1 * time.Millisecond)
-	return t.i
-}
-
-func TestWorkerPool(t *testing.T) {
-	// number of workers should be set to 1 when negative number passed
-	wp := New(
-		WithWorkers(-3),
-		WithPoolTimeout(1*time.Minute),
-		WithWorkTimeout(1*time.Minute),
-	)
+func TestDispatcherSingle(t *testing.T) {
+	wp := NewWorkerPool()
 
 	d := wp.Start(btx, jobs)
 
@@ -55,12 +38,8 @@ func TestWorkerPool(t *testing.T) {
 	require.Equal(t, jobs, len(res))
 }
 
-func TestContextCancelled(t *testing.T) {
-	wp := New(
-		WithWorkers(3),
-		WithPoolTimeout(10*time.Minute),
-		WithWorkTimeout(1*time.Minute),
-	)
+func TestDispatcherContextCancelled(t *testing.T) {
+	wp := NewWorkerPool()
 
 	ctx, cancel := context.WithCancel(btx)
 	defer cancel()
@@ -83,13 +62,18 @@ func TestContextCancelled(t *testing.T) {
 	err := d.Dispatch(&testWorker{10})
 	// when ctx was cancelled we should receive an error when attempting to dispatch as it should be closed.
 	require.Error(t, err)
-	require.ErrorIs(t, err, ErrDispatcherClosed)
+	require.ErrorIs(t, err, context.Canceled)
 
 	// we should not panic if context is cancelled, we should shut down gracefully.
 	d.Done()
 
-	// check the error returned from the dispatcher.
+	// check the error returned from the dispatcher, if any.
 	err = d.Err()
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+
+	// check the wp error method returns the correct error.
+	err = wp.Err(d)
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
 
@@ -99,12 +83,8 @@ func TestContextCancelled(t *testing.T) {
 	require.Greater(t, len(res), 0)
 }
 
-func TestWorkerChanClosed(t *testing.T) {
-	wp := New(
-		WithWorkers(3),
-		WithPoolTimeout(10*time.Minute),
-		WithWorkTimeout(1*time.Minute),
-	)
+func TestDispatcherClosed(t *testing.T) {
+	wp := NewWorkerPool()
 
 	d := wp.Start(btx, jobs)
 	d.Done()
@@ -117,22 +97,12 @@ func TestWorkerChanClosed(t *testing.T) {
 		res = append(res, r.(int))
 	}
 
-	require.NoError(t, d.Err())
 	// no jobs should have been dispatched since the worker channel was immediately closed.
 	require.Equal(t, len(res), 0)
 }
 
-func TestPipeline(t *testing.T) {
-	// TODO no need for go funcs for first stage of dispatching when you know the number of jobs
-	//  Docs should always state to use go funcs at all times anyway and send number of jobs if known for performance reasons,
-	//  Check with benchmarks against two types
-
-	// worker and timeouts will be constricted to range when over the limit.
-	wp := New(
-		WithWorkers(100),
-		WithPoolTimeout(100*time.Minute),
-		WithWorkTimeout(100*time.Minute),
-	)
+func TestDispatcherPipeline(t *testing.T) {
+	wp := NewWorkerPool()
 
 	d := wp.Start(btx, jobs)
 	go func() {
