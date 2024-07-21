@@ -62,12 +62,22 @@ type heavyWorker map[string]string
 
 type hwRes struct {
 	err  error
-	data []byte
+	data *heavyWorker
 }
 
 func (h heavyWorker) Work(_ context.Context) any {
 	data, err := json.Marshal(h)
-	return &hwRes{err: err, data: data}
+	if err != nil {
+		return &hwRes{err: err}
+	}
+
+	hw := &heavyWorker{}
+	err = json.Unmarshal(data, hw)
+	if err != nil {
+		return &hwRes{err: err}
+	}
+
+	return &hwRes{err: err, data: hw}
 }
 
 func heavyWorkerHandler(w any) (Worker, error) {
@@ -79,12 +89,7 @@ func heavyWorkerHandler(w any) (Worker, error) {
 		return nil, got.err
 	}
 
-	hwk := heavyWorker{}
-	err := json.Unmarshal(got.data, &hwk)
-	if got.err != nil {
-		return nil, err
-	}
-	return hwk, nil
+	return got.data, nil
 }
 
 // helper generates a heavy worker
@@ -119,7 +124,7 @@ func getDispatcher(ctx context.Context, wp *WorkerPool, jobs int, buffered bool)
 
 // typical dispatcher pipeline for test purposes.
 //
-// We can re use this function to run the pipeline through different scenarios, including fuzzing.
+// We can re-use this function to run the pipeline through different scenarios, including fuzzing.
 func testDispatcherPipeline(
 	jobs int,
 	buffered bool,
@@ -173,7 +178,7 @@ func testDispatcherPipeline(
 		}
 	}()
 
-	res := make([]Worker, 0)
+	res := make([]Worker, 0, jobs)
 	for r := range d3.Receive() {
 		w, err := handler(r)
 		if err != nil {
@@ -187,10 +192,12 @@ func testDispatcherPipeline(
 	return res, wp.Err(d, d2, d3)
 }
 
-// TODO clean up steps in here, we don't need so many, some receivers / dispatchers can be omitted for the same result
-
-// for benchmarking a standard worker pool setup.
-func testGenericPipeline(jobs, workers int, initialWorker Worker, handler func(any) (Worker, error)) error {
+// for benchmarking a standard worker pool setup. It includes 3 dispatching steps and 3 receiving steps, so 6 in total.
+func testGenericPipeline6Steps(
+	jobs, workers int,
+	initialWorker Worker,
+	handler func(any) (Worker, error),
+) error {
 	ctx := context.Background()
 	d1 := make(chan Worker)
 	rcv1 := make(chan any)
@@ -284,7 +291,7 @@ func testGenericPipeline(jobs, workers int, initialWorker Worker, handler func(a
 		}
 	}()
 
-	res := make([]Worker, 0)
+	res := make([]Worker, 0, jobs)
 	for r := range rcv3 {
 		w, err := handler(r)
 		if err != nil {
@@ -293,6 +300,101 @@ func testGenericPipeline(jobs, workers int, initialWorker Worker, handler func(a
 
 		res = append(res, w)
 	}
+
+	return nil
+}
+
+// for benchmarking a standard worker pool setup. Each dispatcher and receiver step is merged into one, so 3 steps
+// in total.
+func testGenericPipeline3Steps(
+	jobs, workers int,
+	initialWorker Worker,
+	handler func(any) (Worker, error),
+) error {
+	var (
+		ctx = context.Background()
+		d1  = make(chan Worker)
+		d2  = make(chan Worker)
+		d3  = make(chan Worker)
+	)
+
+	go func() {
+		defer close(d1)
+		for i := 0; i < jobs; i++ {
+			d1 <- initialWorker
+		}
+	}()
+
+	go func() {
+		wg := sync.WaitGroup{}
+		defer func() {
+			wg.Wait()
+			close(d2)
+		}()
+
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for w := range d1 {
+					a := w.Work(ctx)
+					wrk, err := handler(a)
+					if err != nil {
+						log.Fatalf("receive response: %v", err)
+					}
+
+					d2 <- wrk
+				}
+			}()
+		}
+	}()
+
+	go func() {
+		wg := sync.WaitGroup{}
+		defer func() {
+			wg.Wait()
+			close(d3)
+		}()
+
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for w := range d2 {
+					a := w.Work(ctx)
+					wrk, err := handler(a)
+					if err != nil {
+						log.Fatalf("receive response: %v", err)
+					}
+
+					d3 <- wrk
+				}
+			}()
+		}
+	}()
+
+	res := make([]Worker, 0, jobs)
+	mu := sync.Mutex{}
+	wg := sync.WaitGroup{}
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for w := range d3 {
+				a := w.Work(ctx)
+				wrk, err := handler(a)
+				if err != nil {
+					log.Fatalf("receive response: %v", err)
+				}
+
+				mu.Lock()
+				res = append(res, wrk)
+				mu.Unlock()
+			}
+		}()
+	}
+
+	wg.Wait()
 
 	return nil
 }

@@ -1,17 +1,26 @@
 # Pool Package
 
 The pool package allows a use to easily spin up a worker pool with minimal effort, it is designed to be used in 
-processes where a user often needs to use worker pools to handle multiple jobs concurrently for speed. See [usage](#usage).
+processes where a user often needs to use worker pools to handle multiple jobs concurrently for speed. It should 
+abstract away some of the nuances of handling concurrency safely, making it easy to prevent race conditions and 
+deadlocks. See [usage](#usage).
 
-We have [benchmarked](#benchmarks) the package against just using the standard go lib, the performance difference is minimal. However, 
-there are, of course many pipeline patterns to benchmark, so feel free to test it out against them, this is just a
-common example. You should only be using the Dispatcher pipeline if you feel it can help you handle the complexities 
-of concurrency, rather than writing your own.
+We have [benchmarked](#benchmarks) the package against just using the standard go lib, the performance difference is 
+favourable against some pipeline patterns and minimal against others. However, there are, of course many pipeline 
+patterns to benchmark, so feel free to test it out against them, this is just a common example. You should only be 
+using the Dispatcher pipeline if you feel it can help you handle the complexities of concurrency, rather than 
+writing your own.
 
 ## Usage
 
-The Dispatcher returned from the WorkerPool.Start(ctx) method, can be used as either a singular worker pool or as part 
-of a pipeline.
+The Dispatcher returned from the WorkerPool.Start(ctx) method, can be used as either a [singular](#single-stage) worker 
+pool or as part of a [pipeline](#pipeline).
+
+### Worker Interface
+
+To use the package, any item that is dispatched must implement the `Worker` interface. This method is the one that will 
+be run in the worker pool and therefore should always handle the most time-consuming tasks, such as HTTP request, 
+marshalling and unmarshalling of data etc.
 
 ### Pipeline
 
@@ -255,9 +264,11 @@ To simulate a general step for benchmarking I have marshalled and unmarshalled a
 of the pipeline, the map has 100 elements with each key and value a 100 character string. 
 
 There are 3 types of pipelines included in the benchmarks:
-1. Generic pipeline that doesn't use the dispatcher, this uses unbuffered channels. See `testGenericPipeline` function.
-2. Buffered dispatcher pipeline.
-3. Unbuffered dispatcher pipeline. 
+1. Generic pipeline that doesn't use the dispatcher, unbuffered. See `testGenericPipeline6Steps` function.
+2. Generic pipeline that doesn't use the dispatcher, unbuffered. It merges a receiver and dispatcher steps into one 
+   step. See `testGenericPipeline3Steps` function.
+3. Buffered dispatcher pipeline.
+4. Unbuffered dispatcher pipeline. 
 
 Here are the results, in the `-bench` flag of the test command, J represents the number of jobs and W represents the 
 number of workers processing them:
@@ -311,7 +322,10 @@ TODO docs on fuzz tests
 
 ## Improvements / TODOs
 
-- Fuzz test pipelines using the wait method.
+- Benchmarks have revealed bottlenecks when we use the `Receive` method as it isn't in a pool. Look into improving 
+  this. Or should we just document to keep `Receive` loops light, and state to use a worker pool to receive if heavy.
+- Fuzz test different pipeline methods, including buffered pipelines using wait groups and mutexes etc.
+- Run profiling to see why there is a difference in the generic pipeline performances.
 - Should we allow users to specify the number of workers at the dispatcher level, maybe take in ...Options?
 - Add a WithLock method which takes func for setting things with a lock, could have a read method too which wraps 
   in a rLock. This should use a different RWMutex to the one used internally. e.g:
