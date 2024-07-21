@@ -51,6 +51,8 @@ type Dispatcher struct {
 }
 
 // Dispatch takes a worker and sends it down the channel. it will return an error if the dispatcher is closed.
+//
+// Should the call error, there is no need to perform a call to SetErr(), as this error has already been set.
 func (d *Dispatcher) Dispatch(w Worker) error {
 	if err := d.isOpen(); err != nil {
 		return err
@@ -93,6 +95,9 @@ func (d *Dispatcher) Err() error {
 	defer d.mu.RUnlock()
 	return d.err
 }
+
+// SetErr on the dispatcher, this can be retrieved later via the Err() method.
+func (d *Dispatcher) SetErr(err error) { d.setErr(err) }
 
 // do sets up a worker pool of wp.workers workers using the worker pools config. Each worker listens for jobs to
 // process until the worker channel is closed.

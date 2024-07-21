@@ -18,10 +18,44 @@ type testWorker struct {
 	i int
 }
 
-func (t *testWorker) Work(context.Context) interface{} {
+func (t *testWorker) Work(context.Context) any {
 	// simulate work being done, makes tests reliable
 	time.Sleep(1 * time.Millisecond)
 	return t.i
+}
+
+func testWorkerHandler(w any) (Worker, error) {
+	i := w.(int) + 1
+	return &testWorker{i: i}, nil
+}
+
+type errWorker struct {
+	i int
+}
+
+type errWorkerRes struct {
+	i   int
+	err error
+}
+
+func (t *errWorker) Work(context.Context) any {
+	// simulate work being done, makes tests reliable
+	time.Sleep(1 * time.Millisecond)
+	if t.i == 2 {
+		return &errWorkerRes{i: t.i, err: errors.New("work error")}
+	}
+	return &errWorkerRes{i: t.i, err: nil}
+}
+
+func errWorkerHandler(w any) (Worker, error) {
+	ew, ok := w.(*errWorkerRes)
+	if !ok {
+		return nil, errors.New("not a errWorkerRes")
+	}
+	if ew.err != nil {
+		return nil, ew.err
+	}
+	return &errWorker{i: ew.i + 1}, nil
 }
 
 type heavyWorker map[string]string
@@ -31,7 +65,7 @@ type hwRes struct {
 	data []byte
 }
 
-func (h heavyWorker) Work(_ context.Context) interface{} {
+func (h heavyWorker) Work(_ context.Context) any {
 	data, err := json.Marshal(h)
 	return &hwRes{err: err, data: data}
 }
@@ -53,15 +87,13 @@ func heavyWorkerHandler(w any) (Worker, error) {
 	return hwk, nil
 }
 
-func testWorkerHandler(w any) (Worker, error) {
-	i := w.(int) + 1
-	return &testWorker{i: i}, nil
-}
-
+// helper generates a heavy worker
 func genHeavyWorker() heavyWorker {
-	h := make(map[string]string, 100)
-	for i := 0; i < 100; i++ {
-		h[randSeq(30)] = randSeq(30)
+	// n represents the number of items, the length of the key and values in the map.
+	n := 100
+	h := make(map[string]string, n)
+	for i := 0; i < n; i++ {
+		h[randSeq(n)] = randSeq(n)
 	}
 	return h
 }
@@ -76,11 +108,29 @@ func randSeq(n int) string {
 	return string(b)
 }
 
-// typical dispatcher pipeline for test purposes.
-func testDispatcherPipeline(jobs, workers int, buffered bool, initialWorker Worker, handler func(any) (Worker, error)) ([]Worker, error) {
-	wp := NewWorkerPool(WithWorkers(workers))
+// helper gets either a buffered or unbuffered dispatcher.
+func getDispatcher(ctx context.Context, wp *WorkerPool, jobs int, buffered bool) *Dispatcher {
+	d := wp.Start(ctx)
+	if buffered {
+		d = wp.Start(ctx, jobs)
+	}
+	return d
+}
 
-	d := getDispatcher(btx, wp, jobs, buffered)
+// typical dispatcher pipeline for test purposes.
+//
+// We can re use this function to run the pipeline through different scenarios, including fuzzing.
+func testDispatcherPipeline(
+	jobs int,
+	buffered bool,
+	initialWorker Worker,
+	handler func(any) (Worker, error),
+	opts ...Option,
+) ([]Worker, error) {
+	ctx := context.Background()
+	wp := NewWorkerPool(opts...)
+
+	d := getDispatcher(ctx, wp, jobs, buffered)
 	go func() {
 		defer d.Done()
 		for i := 0; i < jobs; i++ {
@@ -91,13 +141,14 @@ func testDispatcherPipeline(jobs, workers int, buffered bool, initialWorker Work
 		}
 	}()
 
-	d2 := getDispatcher(btx, wp, jobs, buffered)
+	d2 := getDispatcher(ctx, wp, jobs, buffered)
 	go func() {
 		defer d2.Done()
 		for r := range d.Receive() {
 			w, err := handler(r)
 			if err != nil {
-				log.Fatalf("receive response: %v", err)
+				d.SetErr(err)
+				return
 			}
 			err = d2.Dispatch(w)
 			if err != nil {
@@ -106,13 +157,14 @@ func testDispatcherPipeline(jobs, workers int, buffered bool, initialWorker Work
 		}
 	}()
 
-	d3 := getDispatcher(btx, wp, jobs, buffered)
+	d3 := getDispatcher(ctx, wp, jobs, buffered)
 	go func() {
 		defer d3.Done()
 		for r := range d2.Receive() {
 			w, err := handler(r)
 			if err != nil {
-				log.Fatalf("receive response: %v", err)
+				d.SetErr(err)
+				return
 			}
 			err = d3.Dispatch(w)
 			if err != nil {
@@ -125,7 +177,8 @@ func testDispatcherPipeline(jobs, workers int, buffered bool, initialWorker Work
 	for r := range d3.Receive() {
 		w, err := handler(r)
 		if err != nil {
-			log.Fatalf("receive response: %v", err)
+			d.SetErr(err)
+			break
 		}
 
 		res = append(res, w)
@@ -135,7 +188,8 @@ func testDispatcherPipeline(jobs, workers int, buffered bool, initialWorker Work
 }
 
 // for benchmarking a standard worker pool setup.
-func testCustomPipeline(jobs, workers int, initialWorker Worker, handler func(any) (Worker, error)) error {
+func testGenericPipeline(jobs, workers int, initialWorker Worker, handler func(any) (Worker, error)) error {
+	ctx := context.Background()
 	d1 := make(chan Worker)
 	rcv1 := make(chan any)
 
@@ -158,7 +212,7 @@ func testCustomPipeline(jobs, workers int, initialWorker Worker, handler func(an
 			go func() {
 				defer wg.Done()
 				for w := range d1 {
-					rcv1 <- w.Work(btx)
+					rcv1 <- w.Work(ctx)
 				}
 			}()
 		}
@@ -190,7 +244,7 @@ func testCustomPipeline(jobs, workers int, initialWorker Worker, handler func(an
 			go func() {
 				defer wg.Done()
 				for w := range d2 {
-					rcv2 <- w.Work(btx)
+					rcv2 <- w.Work(ctx)
 				}
 			}()
 		}
@@ -222,7 +276,7 @@ func testCustomPipeline(jobs, workers int, initialWorker Worker, handler func(an
 			go func() {
 				defer wg.Done()
 				for w := range d3 {
-					rcv3 <- w.Work(btx)
+					rcv3 <- w.Work(ctx)
 				}
 			}()
 		}

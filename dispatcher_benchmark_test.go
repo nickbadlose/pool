@@ -18,7 +18,7 @@ func BenchmarkUnbufferedJ1000W10(b *testing.B) {
 
 func benchmarkDispatcherPipeline(b *testing.B, j, w int, buffered bool) {
 	for n := 0; n < b.N; n++ {
-		_, _ = testDispatcherPipeline(j, w, buffered, &testWorker{1}, testWorkerHandler)
+		_, _ = testDispatcherPipeline(j, buffered, &testWorker{1}, testWorkerHandler, WithWorkers(w))
 	}
 }
 
@@ -34,47 +34,47 @@ func BenchmarkBufferedJ1000W10(b *testing.B) {
 	benchmarkDispatcherPipeline(b, 1000, 10, true)
 }
 
-func benchmarkCustomPipeline(b *testing.B, j, w int) {
+func benchmarkGenericPipeline(b *testing.B, j, w int) {
 	for n := 0; n < b.N; n++ {
-		_ = testCustomPipeline(j, w, &testWorker{1}, testWorkerHandler)
+		_ = testGenericPipeline(j, w, &testWorker{1}, testWorkerHandler)
 	}
 }
 
-func BenchmarkCustomJ10W5(b *testing.B) {
-	benchmarkCustomPipeline(b, 10, 5)
+func BenchmarkGenericJ10W5(b *testing.B) {
+	benchmarkGenericPipeline(b, 10, 5)
 }
 
-func BenchmarkCustomJ100W10(b *testing.B) {
-	benchmarkCustomPipeline(b, 100, 10)
+func BenchmarkGenericJ100W10(b *testing.B) {
+	benchmarkGenericPipeline(b, 100, 10)
 }
 
-func BenchmarkCustomJ1000W10(b *testing.B) {
-	benchmarkCustomPipeline(b, 1000, 10)
+func BenchmarkGenericJ1000W10(b *testing.B) {
+	benchmarkGenericPipeline(b, 1000, 10)
 }
 
-func benchmarkCustomPipelineHW(b *testing.B, j, w int) {
+func benchmarkGenericPipelineHW(b *testing.B, j, w int) {
 	hw := genHeavyWorker()
 	for n := 0; n < b.N; n++ {
-		_ = testCustomPipeline(j, w, hw, heavyWorkerHandler)
+		_ = testGenericPipeline(j, w, hw, heavyWorkerHandler)
 	}
 }
 
-func BenchmarkCustomJ10W5HW(b *testing.B) {
-	benchmarkCustomPipelineHW(b, 10, 5)
+func BenchmarkGenericJ10W5HW(b *testing.B) {
+	benchmarkGenericPipelineHW(b, 10, 5)
 }
 
-func BenchmarkCustomJ100W10HW(b *testing.B) {
-	benchmarkCustomPipelineHW(b, 100, 10)
+func BenchmarkGenericJ100W10HW(b *testing.B) {
+	benchmarkGenericPipelineHW(b, 100, 10)
 }
 
-func BenchmarkCustomJ1000W10HW(b *testing.B) {
-	benchmarkCustomPipelineHW(b, 1000, 10)
+func BenchmarkGenericJ1000W10HW(b *testing.B) {
+	benchmarkGenericPipelineHW(b, 1000, 10)
 }
 
 func benchmarkDispatcherPipelineHW(b *testing.B, j, w int, buffered bool) {
 	hw := genHeavyWorker()
 	for n := 0; n < b.N; n++ {
-		_, _ = testDispatcherPipeline(j, w, buffered, hw, heavyWorkerHandler)
+		_, _ = testDispatcherPipeline(j, buffered, hw, heavyWorkerHandler, WithWorkers(w))
 	}
 }
 

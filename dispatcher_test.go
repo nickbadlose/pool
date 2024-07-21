@@ -101,53 +101,25 @@ func TestDispatcherClosed(t *testing.T) {
 	require.Equal(t, len(res), 0)
 }
 
+func TestDispatcherSetErr(t *testing.T) {
+	res, err := testDispatcherPipeline(jobs, true, &errWorker{1}, errWorkerHandler)
+	require.Error(t, err)
+	require.Equal(t, "work error", err.Error())
+
+	// all jobs should exit on the second stage.
+	require.Equal(t, 0, len(res))
+}
+
 func TestDispatcherPipeline(t *testing.T) {
-	wp := NewWorkerPool()
-
-	d := wp.Start(btx, jobs)
-	go func() {
-		defer d.Done()
-		for i := 0; i < jobs; i++ {
-			// set i = 1 for each worker
-			err := d.Dispatch(&testWorker{1})
-			require.NoError(t, err)
-		}
-	}()
-
-	d2 := wp.Start(btx, jobs)
-	go func() {
-		defer d2.Done()
-		for r := range d.Receive() {
-			// increment i by 1 so any workers should have i = 2 after this stage
-			i := r.(int) + 1
-			err := d2.Dispatch(&testWorker{i: i})
-			require.NoError(t, err)
-		}
-	}()
-
-	d3 := wp.Start(btx, jobs)
-	go func() {
-		defer d3.Done()
-		for r := range d2.Receive() {
-			// increment i by 1 so any workers should have i = 3 after this stage
-			i := r.(int) + 1
-			err := d3.Dispatch(&testWorker{i: i})
-			require.NoError(t, err)
-		}
-	}()
-
-	res := make([]int, 0)
-	for r := range d3.Receive() {
-		res = append(res, r.(int))
-	}
-
-	err := wp.Err(d, d2, d3)
+	res, err := testDispatcherPipeline(jobs, true, &testWorker{1}, testWorkerHandler)
 	require.NoError(t, err)
 
 	// require all jobs were completed
 	require.Equal(t, jobs, len(res))
 	// require each job went through each stage of pipeline
-	for _, n := range res {
-		require.Equal(t, 3, n)
+	for _, w := range res {
+		tw, ok := w.(*testWorker)
+		require.True(t, ok)
+		require.Equal(t, 4, tw.i)
 	}
 }
