@@ -172,8 +172,6 @@ func main() {
 
 ### Buffered vs Unbuffered
 
-TODO check the performance cost after benchmarking different pattern.
-
 A user can specify the number of jobs they will be dispatching beforehand, in which case the dispatcher will use a 
 buffered channel. This can be useful for certain concurrency patterns, however, this comes at a [performance cost](#benchmarks).
 
