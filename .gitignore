@@ -2,5 +2,5 @@
 testdata
 
 *.prof
-
+*.test
 pipeline

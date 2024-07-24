@@ -319,10 +319,22 @@ fixed where necessary. See `FuzzDispatcherPipeline` for more information.
 
 ### Profiling
 
+Some handy reading on profiling:
+
+- https://go.dev/blog/pprof
+- https://go.dev/doc/diagnostics
+- https://github.com/golang/go/issues/35057
+
 To run tests with profiling output to be read by `pprof`, run:
 
 ```bash
-go test -bench=J100W10 -benchtime=2s -test.cpuprofile=test.prof
+go test -bench=J100W10 -benchtime=2s -test.cpuprofile=test.prof 
+```
+
+With a single CPU:
+
+```bash
+go test -bench=J100W10 -benchtime=2s -test.cpuprofile=test.prof -test.cpu=1
 ```
 
 ## Improvements / TODOs
