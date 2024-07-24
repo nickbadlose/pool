@@ -178,7 +178,7 @@ func testDispatcherPipeline(
 		}
 	}()
 
-	res := make([]Worker, 0, jobs)
+	res := make([]Worker, 0)
 	for r := range d3.Receive() {
 		w, err := handler(r)
 		if err != nil {

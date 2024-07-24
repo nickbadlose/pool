@@ -254,7 +254,7 @@ go test ./... -count=1 -short
 To run benchmarks, run:
 
 ```
-go test -bench=<functionRegex> -benchtime=10s -benchmem
+go test -bench=<functionRegex> -benchtime=10s -benchmem -count=1
 ```
 
 To simulate a general step for benchmarking I have marshalled and unmarshalled a `map[string]string` at each stage 
@@ -316,6 +316,14 @@ unbuffered dispatcher perform at a similar level.
 
 The `testDispatcherPipeline` flow has been fuzz tested with different worker pool configurations to find any bugs and 
 fixed where necessary. See `FuzzDispatcherPipeline` for more information.
+
+### Profiling
+
+To run tests with profiling output to be read by `pprof`, run:
+
+```bash
+go test -bench=J100W10 -benchtime=2s -test.cpuprofile=test.prof
+```
 
 ## Improvements / TODOs
 
